@@ -5,7 +5,6 @@ const STORAGE_KEY_SHIPMENTS = 'chinatrack_shipments';
 const STORAGE_KEY_TRACKINGMORE = 'chinatrack_trackingmore_key';
 const STORAGE_KEY_BACKEND_URL = 'chinatrack_backend_url';
 
-// Default key for demo purposes
 const DEFAULT_TRACKINGMORE_KEY = 'u84jhs7u-c3em-42ro-4r72-63idxaxliyrg';
 
 export const trackingService = {
@@ -52,15 +51,15 @@ export const trackingService = {
     
     let backendUrl = trackingService.getBackendUrl();
     if (backendUrl !== '/api/track' && backendUrl.startsWith('http')) {
-        // Valid absolute URL
-    } else if (backendUrl !== '/api/track') {
+        // Absolute URL
+    } else {
          backendUrl = '/api/track';
     }
 
     if (!carrierSlug) {
         return {
             status: ShipmentStatus.UNKNOWN,
-            summary: "Chưa hỗ trợ hãng vận chuyển này qua API.",
+            summary: "Chưa hỗ trợ hãng vận chuyển này.",
             sources: []
         };
     }
@@ -80,33 +79,26 @@ export const trackingService = {
         })
       });
 
-      const result = await response.json().catch(() => null);
-
-      if (response.status === 404) {
-          throw new Error("API_NOT_FOUND_404: Không tìm thấy đường dẫn API (Kiểm tra vercel.json)");
+      const responseText = await response.text();
+      let result: any = null;
+      try {
+          result = JSON.parse(responseText);
+      } catch (e) {
+          result = { error: responseText || "Empty response from server" };
       }
 
       if (!response.ok) {
-        // Lấy chi tiết lỗi từ backend gửi về
-        // Code mới trong api/track.js sẽ trả về 'raw_body' nếu parse JSON thất bại
-        const errorDetail = result?.raw_body || result?.details || result?.error || response.statusText;
-        throw new Error(`SERVER_ERROR_${response.status}: ${JSON.stringify(errorDetail).slice(0, 100)}`);
+        const errorMsg = result?.details || result?.error || result?.message || response.statusText;
+        throw new Error(`${response.status}: ${errorMsg}`);
       }
 
-      // Check TrackingMore Meta Code
       if (result.meta?.code !== 200) {
-           throw new Error(`API_ERROR_${result.meta?.code}: ${result.meta?.message}`);
+           throw new Error(`API_${result.meta?.code}: ${result.meta?.message}`);
       }
 
-      // SỬA LỖI PARSING Ở ĐÂY:
-      // TrackingMore v4 realtime trả về data là Object, v4 get trả về data là Array.
-      // Chúng ta hỗ trợ cả hai.
       let trackingData = null;
-
       if (Array.isArray(result.data)) {
-          if (result.data.length > 0) {
-              trackingData = result.data[0];
-          }
+          trackingData = result.data[0];
       } else if (result.data) {
           trackingData = result.data;
       }
@@ -116,20 +108,18 @@ export const trackingService = {
       } else {
           return {
             status: ShipmentStatus.UNKNOWN,
-            summary: "Không tìm thấy dữ liệu vận đơn này (Data null).",
+            summary: "Không tìm thấy dữ liệu (Data null).",
             sources: []
           };
       }
 
     } catch (err: any) {
-      console.warn("Lỗi khi gọi API, chuyển sang chế độ Mock:", err.message);
+      console.warn("Lỗi:", err.message);
       
-      // Delay để trải nghiệm người dùng mượt hơn
       await new Promise(r => setTimeout(r, 800));
 
-      // Mock Data Logic (Giữ nguyên như cũ để demo)
       let mockStatus = ShipmentStatus.IN_TRANSIT;
-      let mockSummary = `[MÔ PHỎNG] Đơn hàng đang được vận chuyển.`;
+      let mockSummary = `[MÔ PHỎNG] Đơn hàng đang vận chuyển.`;
 
       const lastChar = code.slice(-1);
       if (['1', '2', '3'].includes(lastChar)) {
@@ -137,49 +127,37 @@ export const trackingService = {
           mockSummary = `[MÔ PHỎNG] Đã giao hàng thành công.`;
       } else if (['4', '5'].includes(lastChar)) {
           mockStatus = ShipmentStatus.PENDING;
-          mockSummary = `[MÔ PHỎNG] Chờ lấy hàng.`;
-      } else if (['0'].includes(lastChar)) {
-          mockStatus = ShipmentStatus.EXCEPTION;
-          mockSummary = `[MÔ PHỎNG] Giao hàng thất bại.`;
+          mockSummary = `[MÔ PHỎNG] Chờ bưu tá lấy hàng.`;
       }
 
-      mockSummary += `\n\n(Lỗi Server: ${err.message})`;
+      // Hiện lỗi thật sự vào phần chú thích để dễ sửa
+      mockSummary += `\n\n(Lỗi thật: ${err.message})`;
 
       return {
         status: mockStatus,
         summary: mockSummary,
-        sources: [{ title: 'Dữ liệu mô phỏng (Demo)', url: trackingService.getExternalTrackingUrl(carrier, code) }]
+        sources: [{ title: 'Dữ liệu mẫu (Demo)', url: trackingService.getExternalTrackingUrl(carrier, code) }]
       };
     }
   },
 
   parseTrackingMoreData: (item: any, code: string, carrier: Carrier) => {
       let mappedStatus = ShipmentStatus.UNKNOWN;
-      
-      // Map TrackingMore statuses to our types
       const statusStr = (item.delivery_status || item.status || '').toLowerCase();
       
       switch (statusStr) {
         case 'pending': mappedStatus = ShipmentStatus.PENDING; break;
-        case 'notfound': mappedStatus = ShipmentStatus.UNKNOWN; break;
         case 'transit': mappedStatus = ShipmentStatus.IN_TRANSIT; break;
         case 'pickup': mappedStatus = ShipmentStatus.DELIVERING; break;
         case 'delivered': mappedStatus = ShipmentStatus.DELIVERED; break;
-        case 'undelivered': mappedStatus = ShipmentStatus.EXCEPTION; break;
-        case 'exception': mappedStatus = ShipmentStatus.EXCEPTION; break;
+        case 'undelivered': 
+        case 'exception': 
         case 'expired': mappedStatus = ShipmentStatus.EXCEPTION; break;
-        case 'info_received': mappedStatus = ShipmentStatus.PENDING; break; // Thêm trường hợp này
+        case 'info_received': mappedStatus = ShipmentStatus.PENDING; break;
         default: mappedStatus = ShipmentStatus.IN_TRANSIT;
       }
 
       let summary = item.latest_event || "Đang cập nhật...";
-      
-      // Nối thêm địa điểm nếu có
-      if (item.destination_country || item.destination_city) {
-        const loc = [item.destination_city, item.destination_state, item.destination_country].filter(Boolean).join(', ');
-        if (loc) summary += `\nĐến: ${loc}`;
-      }
-
       if (item.latest_checkpoint_time) {
           summary += `\n(${item.latest_checkpoint_time})`;
       }
