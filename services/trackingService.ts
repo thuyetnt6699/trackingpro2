@@ -5,6 +5,7 @@ const STORAGE_KEY_SHIPMENTS = 'chinatrack_shipments';
 const STORAGE_KEY_TRACKINGMORE = 'chinatrack_trackingmore_key';
 const STORAGE_KEY_BACKEND_URL = 'chinatrack_backend_url';
 
+// Default key for demo purposes
 const DEFAULT_TRACKINGMORE_KEY = 'u84jhs7u-c3em-42ro-4r72-63idxaxliyrg';
 
 export const trackingService = {
@@ -86,48 +87,63 @@ export const trackingService = {
       }
 
       if (!response.ok) {
-        // Lấy chi tiết lỗi từ backend gửi về (nếu có)
-        const errorDetail = result?.details || result?.error || response.statusText;
-        throw new Error(`SERVER_ERROR_${response.status}: ${errorDetail}`);
+        // Lấy chi tiết lỗi từ backend gửi về
+        // Code mới trong api/track.js sẽ trả về 'raw_body' nếu parse JSON thất bại
+        const errorDetail = result?.raw_body || result?.details || result?.error || response.statusText;
+        throw new Error(`SERVER_ERROR_${response.status}: ${JSON.stringify(errorDetail).slice(0, 100)}`);
       }
 
-      
+      // Check TrackingMore Meta Code
       if (result.meta?.code !== 200) {
-           throw new Error(`API_ERROR: ${result.meta?.message}`);
+           throw new Error(`API_ERROR_${result.meta?.code}: ${result.meta?.message}`);
       }
 
-      if (result.data?.items && result.data.items.length > 0) {
-          const item = result.data.items[0];
-          return trackingService.parseTrackingMoreData(item, code, carrier);
+      // SỬA LỖI PARSING Ở ĐÂY:
+      // TrackingMore v4 realtime trả về data là Object, v4 get trả về data là Array.
+      // Chúng ta hỗ trợ cả hai.
+      let trackingData = null;
+
+      if (Array.isArray(result.data)) {
+          if (result.data.length > 0) {
+              trackingData = result.data[0];
+          }
+      } else if (result.data) {
+          trackingData = result.data;
+      }
+
+      if (trackingData) {
+          return trackingService.parseTrackingMoreData(trackingData, code, carrier);
       } else {
           return {
             status: ShipmentStatus.UNKNOWN,
-            summary: "Không tìm thấy dữ liệu từ hãng vận chuyển.",
+            summary: "Không tìm thấy dữ liệu vận đơn này (Data null).",
             sources: []
           };
       }
 
     } catch (err: any) {
-      console.warn("Chuyển sang chế độ Giả lập (Mock Data) do lỗi:", err.message);
+      console.warn("Lỗi khi gọi API, chuyển sang chế độ Mock:", err.message);
       
+      // Delay để trải nghiệm người dùng mượt hơn
       await new Promise(r => setTimeout(r, 800));
 
+      // Mock Data Logic (Giữ nguyên như cũ để demo)
       let mockStatus = ShipmentStatus.IN_TRANSIT;
-      let mockSummary = `[MÔ PHỎNG] Đơn hàng đang được vận chuyển qua trạm trung chuyển Quảng Châu.`;
+      let mockSummary = `[MÔ PHỎNG] Đơn hàng đang được vận chuyển.`;
 
       const lastChar = code.slice(-1);
       if (['1', '2', '3'].includes(lastChar)) {
           mockStatus = ShipmentStatus.DELIVERED;
-          mockSummary = `[MÔ PHỎNG] Đã giao hàng thành công tại Hà Nội. Người nhận: Anh Nam.`;
+          mockSummary = `[MÔ PHỎNG] Đã giao hàng thành công.`;
       } else if (['4', '5'].includes(lastChar)) {
           mockStatus = ShipmentStatus.PENDING;
-          mockSummary = `[MÔ PHỎNG] Đơn hàng đã được tạo, chờ bưu tá đến lấy hàng.`;
+          mockSummary = `[MÔ PHỎNG] Chờ lấy hàng.`;
       } else if (['0'].includes(lastChar)) {
           mockStatus = ShipmentStatus.EXCEPTION;
-          mockSummary = `[MÔ PHỎNG] Không liên lạc được người nhận. Đang lưu kho chờ xử lý.`;
+          mockSummary = `[MÔ PHỎNG] Giao hàng thất bại.`;
       }
 
-      mockSummary += `\n\n(Lỗi: ${err.message}. Đang hiển thị dữ liệu mẫu)`;
+      mockSummary += `\n\n(Lỗi Server: ${err.message})`;
 
       return {
         status: mockStatus,
@@ -139,7 +155,11 @@ export const trackingService = {
 
   parseTrackingMoreData: (item: any, code: string, carrier: Carrier) => {
       let mappedStatus = ShipmentStatus.UNKNOWN;
-      switch (item.status) {
+      
+      // Map TrackingMore statuses to our types
+      const statusStr = (item.delivery_status || item.status || '').toLowerCase();
+      
+      switch (statusStr) {
         case 'pending': mappedStatus = ShipmentStatus.PENDING; break;
         case 'notfound': mappedStatus = ShipmentStatus.UNKNOWN; break;
         case 'transit': mappedStatus = ShipmentStatus.IN_TRANSIT; break;
@@ -148,10 +168,18 @@ export const trackingService = {
         case 'undelivered': mappedStatus = ShipmentStatus.EXCEPTION; break;
         case 'exception': mappedStatus = ShipmentStatus.EXCEPTION; break;
         case 'expired': mappedStatus = ShipmentStatus.EXCEPTION; break;
-        default: mappedStatus = ShipmentStatus.UNKNOWN;
+        case 'info_received': mappedStatus = ShipmentStatus.PENDING; break; // Thêm trường hợp này
+        default: mappedStatus = ShipmentStatus.IN_TRANSIT;
       }
 
       let summary = item.latest_event || "Đang cập nhật...";
+      
+      // Nối thêm địa điểm nếu có
+      if (item.destination_country || item.destination_city) {
+        const loc = [item.destination_city, item.destination_state, item.destination_country].filter(Boolean).join(', ');
+        if (loc) summary += `\nĐến: ${loc}`;
+      }
+
       if (item.latest_checkpoint_time) {
           summary += `\n(${item.latest_checkpoint_time})`;
       }

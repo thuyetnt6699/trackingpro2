@@ -2,7 +2,7 @@
 const https = require('https');
 
 module.exports = (req, res) => {
-  // 1. Cấu hình CORS (Cho phép mọi nguồn)
+  // 1. Cấu hình CORS
   res.setHeader('Access-Control-Allow-Credentials', true);
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,POST');
@@ -11,29 +11,25 @@ module.exports = (req, res) => {
     'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version'
   );
 
-  // 2. Xử lý Preflight Request
   if (req.method === 'OPTIONS') {
     res.status(200).end();
     return;
   }
 
-  // 3. Chỉ nhận method POST
   if (req.method !== 'POST') {
     res.status(405).json({ error: 'Method Not Allowed' });
     return;
   }
 
-  // 4. Lấy dữ liệu từ Body
-  // Vercel tự động parse JSON body, nhưng ta kiểm tra kỹ
   const body = req.body || {};
   const { tracking_number, courier_code, api_key } = body;
 
   if (!tracking_number || !courier_code || !api_key) {
-    res.status(400).json({ error: 'Missing required fields', received: body });
+    res.status(400).json({ error: 'Missing required fields' });
     return;
   }
 
-  // 5. Chuẩn bị dữ liệu gửi sang TrackingMore
+  // Sử dụng endpoint Realtime của TrackingMore v4
   const postData = JSON.stringify({
     tracking_number,
     courier_code
@@ -52,36 +48,36 @@ module.exports = (req, res) => {
     }
   };
 
-  // 6. Thực hiện Request bằng module 'https' (Native Node.js)
   const request = https.request(options, (response) => {
     let data = '';
 
-    // Nhận từng chunk dữ liệu
     response.on('data', (chunk) => {
       data += chunk;
     });
 
-    // Kết thúc nhận dữ liệu
     response.on('end', () => {
       try {
+        // Cố gắng parse JSON
         const jsonResponse = JSON.parse(data);
-        
-        // Trả về đúng status code từ TrackingMore
+        // Trả về kết quả cho Frontend
         res.status(response.statusCode).json(jsonResponse);
       } catch (e) {
-        console.error("Parse Error:", e);
-        res.status(500).json({ error: 'Invalid JSON from upstream', raw: data });
+        // Nếu không phải JSON (VD: HTML lỗi từ TrackingMore), trả về text gốc để debug
+        console.error("Non-JSON response:", data);
+        res.status(500).json({ 
+            error: 'Upstream API Error (Non-JSON response)', 
+            statusCode: response.statusCode,
+            raw_body: data 
+        });
       }
     });
   });
 
-  // 7. Xử lý lỗi kết nối
   request.on('error', (e) => {
     console.error("Request Error:", e);
     res.status(500).json({ error: 'Internal Server Error', details: e.message });
   });
 
-  // Gửi dữ liệu đi
   request.write(postData);
   request.end();
 };
