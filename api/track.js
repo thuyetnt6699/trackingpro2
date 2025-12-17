@@ -1,65 +1,87 @@
 // api/track.js
-// Sử dụng CommonJS syntax để đảm bảo tương thích tốt nhất với Vercel Serverless mặc định
+const https = require('https');
 
-module.exports = async (req, res) => {
-  // Cấu hình CORS
+module.exports = (req, res) => {
+  // 1. Cấu hình CORS (Cho phép mọi nguồn)
   res.setHeader('Access-Control-Allow-Credentials', true);
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,POST');
   res.setHeader(
     'Access-Control-Allow-Headers',
     'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version'
   );
 
-  // Preflight check
+  // 2. Xử lý Preflight Request
   if (req.method === 'OPTIONS') {
     res.status(200).end();
     return;
   }
 
-  // Method check
+  // 3. Chỉ nhận method POST
   if (req.method !== 'POST') {
     res.status(405).json({ error: 'Method Not Allowed' });
     return;
   }
 
-  try {
-    const { tracking_number, courier_code, api_key } = req.body;
+  // 4. Lấy dữ liệu từ Body
+  // Vercel tự động parse JSON body, nhưng ta kiểm tra kỹ
+  const body = req.body || {};
+  const { tracking_number, courier_code, api_key } = body;
 
-    if (!tracking_number || !courier_code || !api_key) {
-      res.status(400).json({ error: 'Missing required fields' });
-      return;
+  if (!tracking_number || !courier_code || !api_key) {
+    res.status(400).json({ error: 'Missing required fields', received: body });
+    return;
+  }
+
+  // 5. Chuẩn bị dữ liệu gửi sang TrackingMore
+  const postData = JSON.stringify({
+    tracking_number,
+    courier_code
+  });
+
+  const options = {
+    hostname: 'api.trackingmore.com',
+    port: 443,
+    path: '/v4/trackings/realtime',
+    method: 'POST',
+    headers: {
+      'Tracking-Api-Key': api_key,
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+      'Content-Length': Buffer.byteLength(postData)
     }
+  };
 
-    console.log(`Tracking: ${tracking_number} - ${courier_code}`);
+  // 6. Thực hiện Request bằng module 'https' (Native Node.js)
+  const request = https.request(options, (response) => {
+    let data = '';
 
-    // Call TrackingMore API
-    const response = await fetch('https://api.trackingmore.com/v4/trackings/realtime', {
-      method: 'POST',
-      headers: {
-        'Tracking-Api-Key': api_key,
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
-      },
-      body: JSON.stringify({
-        tracking_number,
-        courier_code
-      })
+    // Nhận từng chunk dữ liệu
+    response.on('data', (chunk) => {
+      data += chunk;
     });
 
-    // Check raw response status
-    if (!response.ok) {
-        const errorText = await response.text();
-        console.error("TrackingMore Error:", response.status, errorText);
-        res.status(response.status).json({ error: `Upstream Error ${response.status}`, details: errorText });
-        return;
-    }
+    // Kết thúc nhận dữ liệu
+    response.on('end', () => {
+      try {
+        const jsonResponse = JSON.parse(data);
+        
+        // Trả về đúng status code từ TrackingMore
+        res.status(response.statusCode).json(jsonResponse);
+      } catch (e) {
+        console.error("Parse Error:", e);
+        res.status(500).json({ error: 'Invalid JSON from upstream', raw: data });
+      }
+    });
+  });
 
-    const data = await response.json();
-    res.status(200).json(data);
+  // 7. Xử lý lỗi kết nối
+  request.on('error', (e) => {
+    console.error("Request Error:", e);
+    res.status(500).json({ error: 'Internal Server Error', details: e.message });
+  });
 
-  } catch (error) {
-    console.error("Server Function Error:", error);
-    res.status(500).json({ error: 'Internal Server Error', details: error.message });
-  }
+  // Gửi dữ liệu đi
+  request.write(postData);
+  request.end();
 };
