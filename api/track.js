@@ -1,16 +1,20 @@
 // api/track.js
 export default async function handler(req, res) {
-  // 1. Cấu hình CORS chặt chẽ để trình duyệt không chặn
+  // Cấu hình CORS đầy đủ để tránh lỗi chặn request từ trình duyệt
+  res.setHeader('Access-Control-Allow-Credentials', true);
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
+  res.setHeader(
+    'Access-Control-Allow-Headers',
+    'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version'
+  );
 
-  // 2. Xử lý preflight request (OPTIONS)
+  // Xử lý preflight request (khi trình duyệt hỏi "tôi có được gửi request không?")
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
   }
 
-  // 3. Chỉ chấp nhận method POST
+  // Chỉ chấp nhận method POST
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method Not Allowed' });
   }
@@ -19,10 +23,10 @@ export default async function handler(req, res) {
     const { tracking_number, courier_code, api_key } = req.body;
 
     if (!tracking_number || !courier_code || !api_key) {
-      return res.status(400).json({ error: 'Missing required fields: tracking_number, courier_code, or api_key' });
+      return res.status(400).json({ error: 'Missing required fields' });
     }
 
-    // 4. Gọi sang TrackingMore
+    // Gọi API của TrackingMore
     const response = await fetch('https://api.trackingmore.com/v4/trackings/realtime', {
       method: 'POST',
       headers: {
@@ -36,10 +40,7 @@ export default async function handler(req, res) {
       })
     });
 
-    // Đọc dữ liệu trả về
     const data = await response.json();
-    
-    // 5. Trả kết quả về cho App
     return res.status(response.status).json(data);
 
   } catch (error) {
