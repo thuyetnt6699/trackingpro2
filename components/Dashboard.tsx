@@ -47,7 +47,9 @@ export const Dashboard: React.FC<DashboardProps> = ({ user, onLogout }) => {
   useEffect(() => {
     loadData();
     setApiKey(trackingService.getTrackingMoreKey());
-    setBackendUrl(trackingService.getBackendUrl());
+    // Hiển thị giá trị thực tế đang dùng, nếu là /api/track mặc định thì để trống cho đẹp hoặc hiển thị luôn
+    const currentUrl = trackingService.getBackendUrl();
+    setBackendUrl(currentUrl === '/api/track' ? '' : currentUrl);
   }, []);
 
   const loadData = () => {
@@ -90,6 +92,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ user, onLogout }) => {
       trackingService.saveTrackingMoreKey(apiKey);
       trackingService.saveBackendUrl(backendUrl);
       setShowSettings(false);
+      // Reload lại dashboard để áp dụng cấu hình mới nếu cần
       alert("Đã lưu cấu hình thành công!");
   };
 
@@ -175,17 +178,17 @@ export const Dashboard: React.FC<DashboardProps> = ({ user, onLogout }) => {
                       
                       <div>
                           <label className="block text-sm font-medium text-gray-700 mb-2 flex items-center gap-2">
-                              <Server size={14} /> Server Backend URL (Vercel)
+                              <Server size={14} /> Server Backend URL
                           </label>
                           <input 
                               type="text" 
                               value={backendUrl}
                               onChange={(e) => setBackendUrl(e.target.value)}
-                              placeholder="Ví dụ: https://my-app.vercel.app/api/track"
+                              placeholder="Mặc định: /api/track (Tự động nhận diện)"
                               className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm font-mono"
                           />
                           <p className="text-xs text-gray-500 mt-2">
-                             Link đến Serverless Function để xử lý CORS. Nếu để trống, hệ thống sẽ dùng dữ liệu giả lập (Demo).
+                             Để trống để sử dụng Server mặc định đi kèm với App (Recommended).
                           </p>
                       </div>
                   </div>

@@ -22,16 +22,22 @@ export const trackingService = {
   },
 
   getBackendUrl: (): string => {
-    return localStorage.getItem(STORAGE_KEY_BACKEND_URL) || '';
+    // Mặc định trả về đường dẫn tương đối nếu người dùng chưa cài đặt
+    // Đường dẫn tương đối '/api/track' sẽ tự động dùng domain hiện tại
+    return localStorage.getItem(STORAGE_KEY_BACKEND_URL) || '/api/track';
   },
 
   saveBackendUrl: (url: string): void => {
-    // Tự động xóa khoảng trắng thừa và dấu gạch chéo cuối
     let cleanUrl = url.trim();
     if (cleanUrl.endsWith('/')) {
         cleanUrl = cleanUrl.slice(0, -1);
     }
-    localStorage.setItem(STORAGE_KEY_BACKEND_URL, cleanUrl);
+    // Nếu người dùng xóa trắng, lưu chuỗi rỗng để code tự động dùng default
+    if (cleanUrl === '') {
+        localStorage.removeItem(STORAGE_KEY_BACKEND_URL);
+    } else {
+        localStorage.setItem(STORAGE_KEY_BACKEND_URL, cleanUrl);
+    }
   },
 
   getExternalTrackingUrl: (carrier: Carrier, code: string): string => {
@@ -45,14 +51,16 @@ export const trackingService = {
   fetchRealTrackingInfo: async (code: string, carrier: Carrier): Promise<{ status: ShipmentStatus, summary: string, sources: {title: string, url: string}[] }> => {
     const apiKey = trackingService.getTrackingMoreKey();
     const carrierSlug = CARRIER_SLUGS[carrier];
+    
+    // Lấy URL, nếu không có trong Storage sẽ dùng mặc định '/api/track'
     let backendUrl = trackingService.getBackendUrl();
 
-    // Xử lý URL
-    if (backendUrl) {
-        backendUrl = backendUrl.trim();
-        if (!backendUrl.startsWith('http')) {
-            backendUrl = `https://${backendUrl}`;
-        }
+    // Xử lý chuẩn hóa URL nếu là đường dẫn tuyệt đối
+    if (backendUrl !== '/api/track' && backendUrl.startsWith('http')) {
+        // Đã là absolute URL hợp lệ, giữ nguyên
+    } else if (backendUrl !== '/api/track') {
+         // Nếu người dùng nhập linh tinh, fallback về mặc định
+         backendUrl = '/api/track';
     }
 
     if (!carrierSlug) {
@@ -64,11 +72,7 @@ export const trackingService = {
     }
 
     try {
-      if (!backendUrl) {
-          throw new Error("NO_BACKEND_CONFIGURED");
-      }
-
-      console.log(`Calling Backend: ${backendUrl}`); // Log để debug
+      console.log(`Calling Backend: ${backendUrl}`);
 
       const response = await fetch(backendUrl, {
         method: 'POST',
@@ -81,6 +85,10 @@ export const trackingService = {
           api_key: apiKey
         })
       });
+
+      if (response.status === 404) {
+          throw new Error("API_NOT_FOUND_404 (Kiểm tra lại file api/track.js trên Vercel)");
+      }
 
       if (!response.ok) {
         throw new Error(`BACKEND_ERROR_${response.status}`);
@@ -123,11 +131,11 @@ export const trackingService = {
           mockSummary = `[MÔ PHỎNG] Không liên lạc được người nhận. Đang lưu kho chờ xử lý.`;
       }
 
-      if (err.message === "NO_BACKEND_CONFIGURED") {
-          mockSummary += `\n\n(LƯU Ý: Đây là dữ liệu giả lập. Hãy vào Cài đặt -> Nhập URL Server Vercel để xem dữ liệu thật)`;
-      } else {
-          mockSummary += `\n\n(Lỗi kết nối Server: ${err.message}. Đang hiển thị dữ liệu mẫu)`;
-      }
+      const errorDetail = err.message.includes("404") 
+        ? "Lỗi 404: Không tìm thấy API. Hãy kiểm tra file vercel.json và cấu trúc thư mục." 
+        : err.message;
+
+      mockSummary += `\n\n(Lỗi kết nối Server: ${errorDetail}. Đang hiển thị dữ liệu mẫu)`;
 
       return {
         status: mockStatus,
@@ -161,7 +169,7 @@ export const trackingService = {
         summary: summary,
         sources: [{ title: 'TrackingMore Realtime', url: `https://www.trackingmore.com/track/en/${code}` }]
       };
-  },
+    },
 
   addShipment: async (code: string, carrier: Carrier): Promise<Shipment> => {
     const initialInfo = await trackingService.fetchRealTrackingInfo(code, carrier);
