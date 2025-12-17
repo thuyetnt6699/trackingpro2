@@ -1,6 +1,8 @@
 // api/track.js
-export default async function handler(req, res) {
-  // Cấu hình CORS đầy đủ để tránh lỗi chặn request từ trình duyệt
+// Sử dụng CommonJS syntax để đảm bảo tương thích tốt nhất với Vercel Serverless mặc định
+
+module.exports = async (req, res) => {
+  // Cấu hình CORS
   res.setHeader('Access-Control-Allow-Credentials', true);
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
@@ -9,24 +11,29 @@ export default async function handler(req, res) {
     'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version'
   );
 
-  // Xử lý preflight request (khi trình duyệt hỏi "tôi có được gửi request không?")
+  // Preflight check
   if (req.method === 'OPTIONS') {
-    return res.status(200).end();
+    res.status(200).end();
+    return;
   }
 
-  // Chỉ chấp nhận method POST
+  // Method check
   if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method Not Allowed' });
+    res.status(405).json({ error: 'Method Not Allowed' });
+    return;
   }
 
   try {
     const { tracking_number, courier_code, api_key } = req.body;
 
     if (!tracking_number || !courier_code || !api_key) {
-      return res.status(400).json({ error: 'Missing required fields' });
+      res.status(400).json({ error: 'Missing required fields' });
+      return;
     }
 
-    // Gọi API của TrackingMore
+    console.log(`Tracking: ${tracking_number} - ${courier_code}`);
+
+    // Call TrackingMore API
     const response = await fetch('https://api.trackingmore.com/v4/trackings/realtime', {
       method: 'POST',
       headers: {
@@ -40,11 +47,19 @@ export default async function handler(req, res) {
       })
     });
 
+    // Check raw response status
+    if (!response.ok) {
+        const errorText = await response.text();
+        console.error("TrackingMore Error:", response.status, errorText);
+        res.status(response.status).json({ error: `Upstream Error ${response.status}`, details: errorText });
+        return;
+    }
+
     const data = await response.json();
-    return res.status(response.status).json(data);
+    res.status(200).json(data);
 
   } catch (error) {
-    console.error("API Proxy Error:", error);
-    return res.status(500).json({ error: 'Internal Server Error', details: error.message });
+    console.error("Server Function Error:", error);
+    res.status(500).json({ error: 'Internal Server Error', details: error.message });
   }
-}
+};
