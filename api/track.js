@@ -1,8 +1,9 @@
+
 // api/track.js
 // Vercel Serverless Function (Node.js 18+)
 
 export default async function handler(req, res) {
-  // 1. Cấu hình CORS
+  // 1. Cấu hình CORS cho phép Frontend gọi vào
   res.setHeader('Access-Control-Allow-Credentials', true);
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,POST');
@@ -11,30 +12,29 @@ export default async function handler(req, res) {
     'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version'
   );
 
-  // 2. Xử lý Preflight (OPTIONS)
+  // 2. Xử lý yêu cầu kiểm tra (Preflight)
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
   }
 
-  // 3. Chỉ chấp nhận POST
+  // 3. Chỉ chấp nhận phương thức POST
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method Not Allowed' });
   }
 
   try {
-    // Vercel tự động parse req.body cho các hàm Node.js
     const { tracking_number, courier_code, api_key } = req.body || {};
 
     if (!tracking_number || !courier_code || !api_key) {
       return res.status(400).json({ 
-        error: 'Missing required fields', 
-        received: { tracking_number, courier_code, hasKey: !!api_key } 
+        error: 'Thiếu thông tin',
+        details: 'Cần có mã vận đơn, mã hãng và API Key.'
       });
     }
 
-    console.log(`Tra cứu: ${tracking_number} - ${courier_code}`);
+    console.log(`[Backend] Đang tra cứu: ${tracking_number} (${courier_code})`);
 
-    // 4. Gọi API TrackingMore (Sử dụng fetch có sẵn trong Node.js 18+)
+    // 4. Gọi API TrackingMore Realtime
     const response = await fetch('https://api.trackingmore.com/v4/trackings/realtime', {
       method: 'POST',
       headers: {
@@ -50,28 +50,27 @@ export default async function handler(req, res) {
 
     const responseText = await response.text();
     
-    // Kiểm tra xem có phải JSON không
+    // Kiểm tra định dạng trả về
     let data;
     try {
       data = JSON.parse(responseText);
     } catch (e) {
-      console.error("Upstream returned non-JSON:", responseText);
-      return res.status(response.status || 500).json({
-        error: 'Upstream API Error',
-        message: 'Dữ liệu từ TrackingMore không phải định dạng JSON.',
-        raw: responseText.slice(0, 500)
+      console.error("[Error] TrackingMore trả về không phải JSON:", responseText);
+      return res.status(502).json({
+        error: 'Lỗi dịch vụ bên thứ 3',
+        message: 'Không thể đọc dữ liệu từ TrackingMore.',
+        raw: responseText.slice(0, 200)
       });
     }
 
-    // Trả về kết quả từ TrackingMore
+    // Trả về kết quả cho App
     return res.status(response.status).json(data);
 
   } catch (error) {
-    console.error("Vercel Function Error:", error);
+    console.error("[Fatal Error]:", error);
     return res.status(500).json({
-      error: 'Internal Server Error',
-      message: error.message,
-      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      error: 'Lỗi máy chủ nội bộ',
+      message: error.message
     });
   }
 }
